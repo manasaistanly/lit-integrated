@@ -4,6 +4,15 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const compression = require('compression');
+const userStatsRoutes = require('./routes/userStats');           
+const gameEngineRoutes = require('./routes/gameEngine');
+const supportRoutes = require('./routes/support');    
+const notificationRoutes = require('./routes/notification');
+const shopRoutes = require('./routes/shop');
+const savedProductsRoutes = require('./routes/savedProducts');
+const leaderboardRoutes = require('./routes/leaderboard');
+const storeRoutes = require('./routes/store');
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -54,6 +63,8 @@ const uploadRoute = require('./routes/upload');
 const contactRoutes = require('./routes/contactRoutes');
 const SubcribeRoutes = require('./routes/subscriberRoutes');
 
+
+
 // ✅ Mount routes
 app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
@@ -68,6 +79,17 @@ app.use('/api/sneaker-world', sneakerWorldRoutes);
 app.use('/api/contact', contactRoutes);
 app.use(uploadRoute); // for image uploads
 app.use('/api/subscribers', SubcribeRoutes);
+app.use('/api/user-stats', userStatsRoutes);
+app.use('/api/game-engine', gameEngineRoutes);
+app.use('/api/support', supportRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/shop', shopRoutes);
+app.use('/api/saved-products', savedProductsRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/store', storeRoutes);
+
+
+
 // ✅ Root endpoint
 app.get('/', (req, res) => {
   res.send('🚀 Unified API for Ecommerce + Newsletter is running...');
