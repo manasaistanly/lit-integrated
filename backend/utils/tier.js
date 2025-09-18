@@ -1,3 +1,4 @@
+//game
 exports.getTier = (user, top5PercentScore = null) => {
   // If dynamic 5%, calculate before and send as param.
   if (top5PercentScore && user.points >= top5PercentScore) return 'Connoisseur';
