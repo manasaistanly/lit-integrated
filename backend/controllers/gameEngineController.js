@@ -1,15 +1,10 @@
-//  createed by backend1
-// createed by backend2
-// hlo
-
-
 const User = require('../models/User');
 const ImagePair = require('../models/ImagePair');
 const { getTier } = require('../utils/tier');
 
-// Helper to check if so-called infinite life is currently active
-function hasInfiniteLife(user) {
-  return user.infiniteLifeExpiresAt && user.infiniteLifeExpiresAt > new Date();
+// --- Input validation helper ---
+function isValidObjectId(id) {
+  return typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/);
 }
 
 // GET /product-pairs
@@ -35,20 +30,22 @@ exports.getProductPairs = async (req, res) => {
 exports.exitGame = async (req, res) => {
   try {
     const { userId } = req.body;
+    if (!isValidObjectId(userId)) return res.status(400).json({ error: 'Invalid userId' });
+
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    if (!hasInfiniteLife(user) && user.lives > 0) {
+    if (user.lives > 0) {
       user.lives -= 1;
     }
     user.streak = 0;
     user.tier = getTier(user);
     await user.save();
+
     res.json({
       lives: user.lives,
       streak: user.streak,
-      tier: user.tier,
-      infiniteLifeExpiresAt: user.infiniteLifeExpiresAt
+      tier: user.tier
     });
   } catch (err) {
     console.error('exitGame error:', err);
@@ -61,6 +58,10 @@ exports.exitGame = async (req, res) => {
 exports.validateAnswer = async (req, res) => {
   try {
     const { userId, pairId, choice, timedOut } = req.body;
+    if (!isValidObjectId(userId) || !isValidObjectId(pairId)) {
+      return res.status(400).json({ error: 'Invalid userId or pairId' });
+    }
+
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -68,14 +69,17 @@ exports.validateAnswer = async (req, res) => {
     let isCorrect = false;
 
     if (timedOut || !choice) {
-      if (!hasInfiniteLife(user)) {
-        user.lives = Math.max(0, user.lives - 1);
-      }
+      user.lives = Math.max(0, user.lives - 1);
       user.streak = 0;
       user.lastPlayedAt = new Date();
     } else {
       const pair = await ImagePair.findById(pairId);
       if (!pair) return res.status(404).json({ error: 'Pair not found' });
+
+      // Validate choice
+      if (choice !== 'A' && choice !== 'B') {
+        return res.status(400).json({ error: 'Invalid choice' });
+      }
 
       if (
         (choice === 'A' && pair.productA.price > pair.productB.price) ||
@@ -83,14 +87,15 @@ exports.validateAnswer = async (req, res) => {
       ) {
         isCorrect = true;
         user.gamesWon = (user.gamesWon || 0) + 1;
-        user.points += 10;
+        user.points = (user.points || 0) + 10;
 
         // --- Streak logic ---
         const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
         if (user.streak > 0 && user.lastPlayedAt) {
           const last = new Date(user.lastPlayedAt);
           last.setHours(0, 0, 0, 0);
-          today.setHours(0, 0, 0, 0);
           const dayDiff = (today - last) / (1000 * 60 * 60 * 24);
 
           if (dayDiff === 1) {
@@ -103,12 +108,8 @@ exports.validateAnswer = async (req, res) => {
         }
         user.lastPlayedAt = today;
 
-        // --- Gems for every 5-streak milestone ---
-        if (user.streak % 5 === 0) user.gems += 1;
       } else {
-        if (!hasInfiniteLife(user)) {
-          user.lives = Math.max(0, user.lives - 1);
-        }
+        user.lives = Math.max(0, user.lives - 1);
         user.streak = 0;
         user.lastPlayedAt = new Date();
       }
@@ -123,9 +124,7 @@ exports.validateAnswer = async (req, res) => {
       points: user.points,
       lives: user.lives,
       streak: user.streak,
-      tier: user.tier,
-      gems: user.gems,
-      infiniteLifeExpiresAt: user.infiniteLifeExpiresAt
+      tier: user.tier
     });
   } catch (err) {
     console.error('validateAnswer error:', err);
