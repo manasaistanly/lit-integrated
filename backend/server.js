@@ -12,7 +12,7 @@ const shopRoutes = require('./routes/shop');
 const savedProductsRoutes = require('./routes/savedProducts');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
-
+const couponRoutes = require('./routes/couponRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -52,7 +52,6 @@ mongoose.connect(process.env.MONGODB_URI, {
 const productRoutes = require('./routes/productRoutes');
 const userRoutes = require('./routes/userRoutes');
 const orderRoutes = require('./routes/orderRoutes');
-const couponRoutes = require('./routes/couponRoutes');
 const articleRoutes = require('./routes/articleRoutes');
 const mailArticleRoutes = require('./routes/mailArticleRoutes');
 const fastFashionRoutes = require('./routes/fastFashionRoutes');
@@ -87,7 +86,7 @@ app.use('/api/shop', shopRoutes);
 app.use('/api/saved-products', savedProductsRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/store', storeRoutes);
-
+app.use('/api/coupons', couponRoutes);
 
 
 // ✅ Root endpoint
