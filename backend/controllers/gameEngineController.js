@@ -1,6 +1,4 @@
-//  createed by backend1
-// createed by backend2
-// hlo
+
 
 
 const User = require('../models/User');
