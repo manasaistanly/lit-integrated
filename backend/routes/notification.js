@@ -9,4 +9,15 @@ router.get('/', notificationController.fetchNotifications);
 // Mark a notification as read
 router.patch('/:id/read', notificationController.markAsRead);
 
+
+
+// for strike routes
+
+router.post('/push', notificationController.pushNotification);
+router.get('/', notificationController.getNotifications);
+router.post('/:id/mark-read', notificationController.markRead);
+router.post('/mark-all-read', notificationController.markAllRead);
+router.get('/unread-count', notificationController.unreadCount);
+
+
 module.exports = router;
