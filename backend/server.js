@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const userStatsRoutes = require('./routes/userStats');           
 const gameEngineRoutes = require('./routes/gameEngine');
 const supportRoutes = require('./routes/support');    
@@ -13,6 +15,7 @@ const savedProductsRoutes = require('./routes/savedProducts');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const couponRoutes = require('./routes/couponRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -39,6 +42,11 @@ app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
+app.use(helmet());
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+}));
 
 // ✅ MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -87,6 +95,7 @@ app.use('/api/saved-products', savedProductsRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/store', storeRoutes);
 app.use('/api/coupons', couponRoutes);
+app.use('/api/payments', paymentRoutes);
 
 
 // ✅ Root endpoint

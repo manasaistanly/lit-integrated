@@ -1,23 +1,60 @@
 const User = require('../models/User');
 const ImagePair = require('../models/ImagePair');
 const { getTier } = require('../utils/tier');
+const Joi = require('joi');
 
-// --- Input validation helper ---
-function isValidObjectId(id) {
-  return typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/);
+// --- Input validation schemas ---
+const objectIdPattern = /^[0-9a-fA-F]{24}$/;
+const validateUserId = Joi.string().pattern(objectIdPattern).required();
+const validatePairId = Joi.string().pattern(objectIdPattern).required();
+const validateChoice = Joi.string().valid('A', 'B').optional();
+const validateTimedOut = Joi.boolean().optional();
+
+function validateRequest(schema, data) {
+  const { error } = schema.validate(data);
+  return error ? error.details[0].message : null;
+}
+
+// --- Life regeneration helper (1 life per 20 min, max 5) ---
+function regenerateLives(user) {
+  const now = new Date();
+  const last = user.lastLifeUpdate || now;
+  const diffMs = now - last;
+  const minutesPassed = Math.floor(diffMs / (1000 * 60));
+  const livesToAdd = Math.floor(minutesPassed / 20);
+
+  if (livesToAdd > 0) {
+    user.lives = Math.min(user.lives + livesToAdd, 5);
+    user.lastLifeUpdate = new Date(last.getTime() + livesToAdd * 20 * 60 * 1000);
+  }
 }
 
 // GET /product-pairs
 exports.getProductPairs = async (req, res) => {
   try {
-    // Fetch 10 random product pairs
+    // Validate userId
+    const errorMsg = validateRequest(Joi.object({ userId: validateUserId }), req.query);
+    if (errorMsg) return res.status(400).json({ error: errorMsg });
+
+    const { userId } = req.query;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    regenerateLives(user);
+    await user.save();
+
+    if (user.lives <= 0) {
+      return res.status(400).json({
+        error: 'No lives remaining. Please wait for regeneration or buy lives.'
+      });
+    }
+
     const pairs = await ImagePair.aggregate([{ $sample: { size: 10 } }]);
     res.json(
       pairs.map(p => ({
         id: p._id,
         productA: { name: p.productA.name, image: p.productA.image },
         productB: { name: p.productB.name, image: p.productB.image }
-        // Don't send price, keep data minimal for game round
       }))
     );
   } catch (err) {
@@ -29,17 +66,25 @@ exports.getProductPairs = async (req, res) => {
 // POST /exit-game
 exports.exitGame = async (req, res) => {
   try {
-    const { userId } = req.body;
-    if (!isValidObjectId(userId)) return res.status(400).json({ error: 'Invalid userId' });
+    const errorMsg = validateRequest(Joi.object({ userId: validateUserId }), req.body);
+    if (errorMsg) return res.status(400).json({ error: errorMsg });
 
+    const { userId } = req.body;
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    if (user.lives > 0) {
-      user.lives -= 1;
+    regenerateLives(user);
+
+    if (user.lives <= 0) {
+      return res.status(400).json({
+        error: 'No lives remaining. Please wait for regeneration or buy lives.'
+      });
     }
+
+    user.lives -= 1;
     user.streak = 0;
     user.tier = getTier(user);
+
     await user.save();
 
     res.json({
@@ -54,16 +99,30 @@ exports.exitGame = async (req, res) => {
 };
 
 // POST /validate-answer
-// body: { userId, pairId, choice, timedOut }
 exports.validateAnswer = async (req, res) => {
   try {
-    const { userId, pairId, choice, timedOut } = req.body;
-    if (!isValidObjectId(userId) || !isValidObjectId(pairId)) {
-      return res.status(400).json({ error: 'Invalid userId or pairId' });
-    }
+    // Validate input
+    const schema = Joi.object({
+      userId: validateUserId,
+      pairId: validatePairId,
+      choice: validateChoice,
+      timedOut: validateTimedOut
+    });
+    const errorMsg = validateRequest(schema, req.body);
+    if (errorMsg) return res.status(400).json({ error: errorMsg });
 
+    const { userId, pairId, choice, timedOut } = req.body;
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
+
+    regenerateLives(user);
+
+    if (user.lives <= 0) {
+      await user.save();
+      return res.status(400).json({
+        error: 'No lives remaining. Please wait for regeneration or buy lives.'
+      });
+    }
 
     user.gamesPlayed = (user.gamesPlayed || 0) + 1;
     let isCorrect = false;
@@ -76,11 +135,6 @@ exports.validateAnswer = async (req, res) => {
       const pair = await ImagePair.findById(pairId);
       if (!pair) return res.status(404).json({ error: 'Pair not found' });
 
-      // Validate choice
-      if (choice !== 'A' && choice !== 'B') {
-        return res.status(400).json({ error: 'Invalid choice' });
-      }
-
       if (
         (choice === 'A' && pair.productA.price > pair.productB.price) ||
         (choice === 'B' && pair.productB.price > pair.productA.price)
@@ -89,7 +143,7 @@ exports.validateAnswer = async (req, res) => {
         user.gamesWon = (user.gamesWon || 0) + 1;
         user.points = (user.points || 0) + 10;
 
-        // --- Streak logic ---
+        // Streak logic
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
@@ -98,16 +152,12 @@ exports.validateAnswer = async (req, res) => {
           last.setHours(0, 0, 0, 0);
           const dayDiff = (today - last) / (1000 * 60 * 60 * 24);
 
-          if (dayDiff === 1) {
-            user.streak += 1;
-          } else if (dayDiff > 1) {
-            user.streak = 1;
-          }
+          if (dayDiff === 1) user.streak += 1;
+          else if (dayDiff > 1) user.streak = 1;
         } else {
           user.streak = 1;
         }
         user.lastPlayedAt = today;
-
       } else {
         user.lives = Math.max(0, user.lives - 1);
         user.streak = 0;
@@ -115,7 +165,6 @@ exports.validateAnswer = async (req, res) => {
       }
     }
 
-    // Dynamic tier calculation
     user.tier = getTier(user);
     await user.save();
 

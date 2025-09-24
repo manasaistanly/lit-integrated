@@ -6,9 +6,8 @@ exports.gemPacks = [
 ];
 
 exports.lifePacks = [
-  { gems: 2, lives: 5 },
-  { gems: 4, lives: 10 },
-  { gems: 6, lives: 15 },
-  { gems: 8, lives: 20 },
-  { gems: 50, infinite: true } // Infinite life for 24hr
+  { gems: 2, lives: 1 },
+  { gems: 4, lives: 2 },
+  { gems: 6, lives: 3 },
+  { gems: 8, lives: 5 }
 ];

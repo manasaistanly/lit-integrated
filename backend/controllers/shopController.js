@@ -1,12 +1,23 @@
 const User = require('../models/User');
-const { gemPacks, lifePacks } = require('../config/storeConfig');
+const { gemPacks, lifePacks, streakPacks } = require('../config/storeConfig');
 
-// Check if a user currently has infinite life
-function hasInfiniteLife(user) {
-  return user.infiniteLifeExpiresAt && user.infiniteLifeExpiresAt > new Date();
+// Utility: Regenerate lives based on time (example logic: +1 life every 15 minutes, max 5)
+function regenerateLives(user) {
+  const LIFE_REGEN_INTERVAL = 15 * 60 * 1000; // 15 minutes
+  if (!user.lastLifeRegen) user.lastLifeRegen = new Date();
+  if (user.lives >= 5) return;
+
+  const now = new Date();
+  const elapsed = now - user.lastLifeRegen;
+  const livesToAdd = Math.floor(elapsed / LIFE_REGEN_INTERVAL);
+
+  if (livesToAdd > 0) {
+    user.lives = Math.min(user.lives + livesToAdd, 5);
+    user.lastLifeRegen = new Date(user.lastLifeRegen.getTime() + livesToAdd * LIFE_REGEN_INTERVAL);
+  }
 }
 
-// GET /api/shop/gems - List all gem packs
+// GET /api/shop/gems - List all gem packs (for reference only)
 exports.getGemPacks = (req, res) => {
   res.json(gemPacks);
 };
@@ -16,47 +27,61 @@ exports.getLifePacks = (req, res) => {
   res.json(lifePacks);
 };
 
-// POST /api/shop/buy-gems { userId, packIndex }
-exports.buyGems = async (req, res) => {
-  const { userId, packIndex } = req.body;
-  const pack = gemPacks[packIndex];
-  const user = await User.findById(userId);
-  if (!user || !pack) return res.status(400).json({ error: 'Invalid request' });
-  // Validate real payment here!
-  user.gems += pack.gems;
-  await user.save();
-  res.json({ success: true, gems: user.gems });
+// GET /api/shop/streaks - List all streak packs
+exports.getStreakPacks = (req, res) => {
+  res.json(streakPacks);
 };
 
-// POST /api/shop/buy-life { userId, packIndex }
-exports.buyLife = async (req, res) => {
+// POST /api/shop/buy-lives { userId, packIndex }
+exports.buyLives = async (req, res) => {
   const { userId, packIndex } = req.body;
   const pack = lifePacks[packIndex];
   const user = await User.findById(userId);
-  if (!user || !pack) return res.status(400).json({ error: 'Invalid request' });
-  if (user.gems < pack.gems) return res.status(400).json({ error: 'Not enough gems' });
 
-  const now = new Date();
-  // If trying to extend infinite life but it's not expired yet, disallow
-  if (pack.infinite) {
-    if (hasInfiniteLife(user)) {
-      return res.status(400).json({ error: 'You already have infinite life active!' });
-    }
-    user.infiniteLifeExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    user.lives = 5;
-  } else {
-    if (hasInfiniteLife(user)) {
-      return res.status(400).json({ error: 'Infinite life active, cannot buy finite lives.' });
-    }
-    user.lives = Math.min(user.lives + pack.lives, 5);
+  if (!user || !pack) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
+
+  // Regenerate lives before purchase
+  regenerateLives(user);
+
+  if (user.gems < pack.gems) {
+    return res.status(400).json({ error: 'Not enough gems' });
   }
 
   user.gems -= pack.gems;
+  user.lives = Math.min(user.lives + (pack.lives || 0), 5); // cap lives at 5
+
   await user.save();
+
   res.json({
     success: true,
     lives: user.lives,
-    gems: user.gems,
-    infiniteLifeExpiresAt: user.infiniteLifeExpiresAt
+    gems: user.gems
+  });
+};
+
+// POST /api/shop/buy-streak { userId, packIndex }
+exports.buyStreak = async (req, res) => {
+  const { userId, packIndex } = req.body;
+  const pack = streakPacks[packIndex];
+  const user = await User.findById(userId);
+
+  if (!user || !pack) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
+  if (user.gems < pack.gems) {
+    return res.status(400).json({ error: 'Not enough gems' });
+  }
+
+  user.gems -= pack.gems;
+  user.streak = (user.streak || 0) + (pack.streak || 0);
+
+  await user.save();
+
+  res.json({
+    success: true,
+    streak: user.streak,
+    gems: user.gems
   });
 };
