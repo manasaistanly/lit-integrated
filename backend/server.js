@@ -11,7 +11,7 @@ const gameEngineRoutes = require('./routes/gameEngine');
 const supportRoutes = require('./routes/support');    
 const notificationRoutes = require('./routes/notification');
 const shopRoutes = require('./routes/shop');
-const savedProductsRoutes = require('./routes/savedProducts');
+const savedProductsRoutes = require('./routes/savedProductRoutes');
 const leaderboardRoutes = require('./routes/leaderboard');
 const storeRoutes = require('./routes/store');
 const couponRoutes = require('./routes/couponRoutes');
@@ -70,6 +70,10 @@ const uploadRoute = require('./routes/upload');
 const contactRoutes = require('./routes/contactRoutes');
 const SubcribeRoutes = require('./routes/subscriberRoutes');
 
+// for strike routes
+const streakRoutes = require('./routes/streakRoutes');
+
+
 
 
 // ✅ Mount routes
@@ -112,3 +116,33 @@ app.use(errorHandler);
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+
+
+
+
+// for notification and streaks
+// 
+
+const bodyParser = require('body-parser');
+app.use(bodyParser.json());
+
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/notifications_streak_db';
+
+
+mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+.then(() => console.log('MongoDB connected'))
+.catch(err => { console.error('MongoDB connection error', err); process.exit(1); });
+
+
+app.use('/notifications', notificationRoutes);
+app.use('/streaks', streakRoutes);
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
+
+// for saved products
+const savedProductRoutes = require("./routes/savedProductRoutes");
+
+// After other middlewares/routes
+app.use("/saved-products", savedProductRoutes);

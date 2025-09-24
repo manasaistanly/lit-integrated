@@ -7,3 +7,12 @@ exports.getTier = (user, top5PercentScore = null) => {
   if (winRate < 0.95) return 'Amateur';
   return 'Amateur';
 };
+
+
+// Basic tier logic (you can customize thresholds later)
+exports.calculateTier = (count) => {
+  if (count >= 20) return 'Platinum';
+  if (count >= 10) return 'Gold';
+  if (count >= 5) return 'Silver';
+  return 'Bronze';
+};
