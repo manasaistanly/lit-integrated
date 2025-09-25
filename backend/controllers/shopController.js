@@ -1,9 +1,9 @@
 const User = require('../models/User');
 const { gemPacks, lifePacks, streakPacks } = require('../config/storeConfig');
 
-// Utility: Regenerate lives based on time (example logic: +1 life every 15 minutes, max 5)
+// Utility: Regenerate lives based on time (example logic: +1 life every 20 minutes, max 5)
 function regenerateLives(user) {
-  const LIFE_REGEN_INTERVAL = 15 * 60 * 1000; // 15 minutes
+  const LIFE_REGEN_INTERVAL = 20 * 60 * 1000; 
   if (!user.lastLifeRegen) user.lastLifeRegen = new Date();
   if (user.lives >= 5) return;
 
@@ -62,6 +62,7 @@ exports.buyLives = async (req, res) => {
 };
 
 // POST /api/shop/buy-streak { userId, packIndex }
+
 exports.buyStreak = async (req, res) => {
   const { userId, packIndex } = req.body;
   const pack = streakPacks[packIndex];
@@ -75,7 +76,7 @@ exports.buyStreak = async (req, res) => {
   }
 
   user.gems -= pack.gems;
-  user.streak = (user.streak || 0) + (pack.streak || 0);
+  user.streak = (user.streak || 0) + (pack.days || 0); // <-- use 'days'
 
   await user.save();
 

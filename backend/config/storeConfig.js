@@ -11,3 +11,8 @@ exports.lifePacks = [
   { gems: 6, lives: 3 },
   { gems: 8, lives: 5 }
 ];
+exports.streakPacks = [
+  { gems: 50, days: 1 },   
+  { gems: 120, days: 3 },  
+  { gems: 250, days: 7 }   
+];

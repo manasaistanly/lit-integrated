@@ -1,7 +1,7 @@
 
 const SavedProduct = require("../models/SavedProduct");
 const Product = require("../models/Product");
-const { calculateTier } = require("../utils/tierUtils");
+const { calculateTier } = require("../utils/tier");
 
 // Save product to wishlist
 exports.saveProduct = async (req, res) => {

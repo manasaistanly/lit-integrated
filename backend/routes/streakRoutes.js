@@ -4,9 +4,9 @@ const router = express.Router();
 const streakController = require('../controllers/streakController');
 
 
-router.post('/track', streakController.trackStreak);
+router.post('/record', streakController.recordStreak);
 router.get('/:userId', streakController.getStreak);
-router.post('/:userId/reset', streakController.resetStreak);
+router.post('/reset/:userId', streakController.resetStreak);
 
 
 module.exports = router;
