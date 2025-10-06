@@ -44,6 +44,66 @@ const validateRequest = (schema) => {
 };
 
 /**
+ * Create new coupon
+ * @route POST /api/coupons
+ */
+router.post('/',
+  auth,
+  couponLimiter,
+  validateRequest(schemas.create),
+  async (req, res) => {
+    try {
+      const { userId } = req.body;
+
+      // Check for existing active coupons
+      const existingCoupon = await Coupon.findOne({
+        userId,
+        status: 'active',
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (existingCoupon) {
+        return res.status(400).json({
+          success: false,
+          error: 'User already has an active coupon'
+        });
+      }
+
+      // Generate coupon code
+      const code = require('crypto')
+        .randomBytes(4)
+        .toString('hex')
+        .toUpperCase();
+
+      // Create new coupon
+      const coupon = await Coupon.create({
+        code,
+        userId,
+        status: 'active',
+        discountType: 'percent',
+        discountValue: 10,
+        expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000) // 15 days
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          code: coupon.code,
+          discountValue: coupon.discountValue,
+          expiresAt: coupon.expiresAt
+        }
+      });
+    } catch (err) {
+      console.error('Create coupon error:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create coupon'
+      });
+    }
+  }
+);
+
+/**
  * Validate coupon
  * @route POST /api/coupons/validate
  */

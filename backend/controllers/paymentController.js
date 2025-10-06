@@ -9,8 +9,9 @@ const Joi = require('joi');
 const CONSTANTS = {
   CURRENCY: 'INR',
   MIN_AMOUNT: 1,
-  MAX_AMOUNT: 100000, // Set appropriate maximum
+  MAX_AMOUNT: 100000, 
   PAISE_MULTIPLIER: 100
+  
 };
 
 // Validation schemas
@@ -231,5 +232,5 @@ exports.getUserPaymentHistory = async (userId) => {
 };
 
 exports.handleWebhook = async (payload, signature) => {
-  // Implement webhook handling
+  
 };

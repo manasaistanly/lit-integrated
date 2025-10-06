@@ -6,16 +6,8 @@ const path = require('path');
 const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const userStatsRoutes = require('./routes/userStats');           
-const gameEngineRoutes = require('./routes/gameEngine');
-const supportRoutes = require('./routes/support');    
-const notificationRoutes = require('./routes/notification');
-const savedProductsRoutes = require('./routes/savedProductRoutes');
-const leaderboardRoutes = require('./routes/leaderboard');
-const storeRoutes = require('./routes/store');
-const couponRoutes = require('./routes/couponRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
-const streakRoutes = require('./routes/streakRoutes');
+// Initial route imports removed to avoid duplication
+// These are now organized in the sections below
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -43,10 +35,29 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
 app.use(helmet());
-app.use(rateLimit({
+// Global rate limiter
+const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100 // limit each IP to 100 requests per windowMs
-}));
+});
+
+// API-specific rate limiters
+const gameLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200, // More lenient for game actions
+  message: 'Too many game requests, please try again later'
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50, // Stricter for auth-related routes
+  message: 'Too many authentication attempts, please try again later'
+});
+
+// Apply rate limiters
+app.use('/api/game-engine', gameLimiter);
+app.use('/api/users', authLimiter);
+app.use(globalLimiter); // For all other routes
 
 // ✅ MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -56,19 +67,38 @@ mongoose.connect(process.env.MONGODB_URI, {
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// ✅ Routes
-const productRoutes = require('./routes/productRoutes');
+// ✅ Routes - Core Authentication & User Management
 const userRoutes = require('./routes/userRoutes');
+//const testAuthRoutes = require('./routes/testAuth');
+const userStatsRoutes = require('./routes/userStats');
+
+// ✅ Routes - Game System
+const gameEngineRoutes = require('./routes/gameEngine');
+const leaderboardRoutes = require('./routes/leaderboard');
+const streakRoutes = require('./routes/streakRoutes');
+
+// ✅ Routes - Store & Commerce
+const storeRoutes = require('./routes/store');
+const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const savedProductsRoutes = require('./routes/savedProductRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+
+// ✅ Routes - Content & Articles
 const articleRoutes = require('./routes/articleRoutes');
 const mailArticleRoutes = require('./routes/mailArticleRoutes');
 const fastFashionRoutes = require('./routes/fastFashionRoutes');
 const luxuryFashionRoutes = require('./routes/luxuryFashionRoutes');
 const sustainableFashionRoutes = require('./routes/sustainableFashionRoutes');
 const sneakerWorldRoutes = require('./routes/sneakerWorldRoutes');
+
+// ✅ Routes - Support & Utilities
 const uploadRoute = require('./routes/upload');
 const contactRoutes = require('./routes/contactRoutes');
 const SubcribeRoutes = require('./routes/subscriberRoutes');
+const supportRoutes = require('./routes/support');
+const notificationRoutes = require('./routes/notification');
 
 
 
@@ -76,29 +106,39 @@ const SubcribeRoutes = require('./routes/subscriberRoutes');
 
 
 // ✅ Mount routes
-app.use('/api/products', productRoutes);
+
+// Core Authentication & User Management
 app.use('/api/users', userRoutes);
+//app.use('/api/test-auth', testAuthRoutes); // Development only
+app.use('/api/user-stats', userStatsRoutes);
+
+// Game System
+app.use('/api/game-engine', gameEngineRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/streak', streakRoutes);
+
+// Store & Commerce
+app.use('/api/store', storeRoutes);
+app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/saved-products', savedProductsRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api/coupons', couponRoutes);
+
+// Content & Articles
 app.use('/api/articles', articleRoutes);
 app.use('/api/mail-articles', mailArticleRoutes);
 app.use('/api/fast-fashion', fastFashionRoutes);
 app.use('/api/luxury-fashion', luxuryFashionRoutes);
 app.use('/api/sustainable-fashion', sustainableFashionRoutes);
 app.use('/api/sneaker-world', sneakerWorldRoutes);
+
+// Support & Utilities
 app.use('/api/contact', contactRoutes);
 app.use(uploadRoute); // for image uploads
 app.use('/api/subscribers', SubcribeRoutes);
-app.use('/api/user-stats', userStatsRoutes);
-app.use('/api/game-engine', gameEngineRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/store', storeRoutes); // Consolidated store/shop routes
-app.use('/api/saved-products', savedProductsRoutes);
-app.use('/api/leaderboard', leaderboardRoutes);
-app.use('/api/coupons', couponRoutes);
-app.use('/api/payments', paymentRoutes);
-app.use('/api/streak', streakRoutes);
 
 
 // ✅ Root endpoint
@@ -119,25 +159,3 @@ app.listen(PORT, () => {
 
 
 
-// for notification and streaks
-// 
-
-const bodyParser = require('body-parser');
-app.use(bodyParser.json());
-
-
-
-
-
-app.use('/notifications', notificationRoutes);
-
-
-
-
-
-
-// for saved products
-const savedProductRoutes = require("./routes/savedProductRoutes");
-
-// After other middlewares/routes
-app.use("/saved-products", savedProductRoutes);
