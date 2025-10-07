@@ -228,9 +228,73 @@ exports.getPaymentStatus = async (req, res) => {
 };
 
 exports.getUserPaymentHistory = async (userId) => {
-  // Implement history retrieval
+  try {
+    // Fetch latest 100 payments from Razorpay
+    const payments = await razorpay.payments.all({ count: 100 });
+
+    // Filter only payments related to this user (assuming you store userId in notes)
+    const userPayments = payments.items.filter(
+      (p) => p.notes && p.notes.userId === userId
+    );
+
+    // Format clean response
+    return userPayments.map((p) => ({
+      id: p.id,
+      order_id: p.order_id,
+      amount: p.amount / 100, // from paise → INR
+      status: p.status,
+      method: p.method,
+      currency: p.currency,
+      created_at: new Date(p.created_at * 1000),
+      email: p.email,
+      contact: p.contact,
+    }));
+  } catch (err) {
+    console.error('Error retrieving payment history:', err);
+    throw new Error('Failed to retrieve user payment history');
+  }
 };
 
+
 exports.handleWebhook = async (payload, signature) => {
-  
+  try {
+    // Verify Razorpay signature
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
+      .update(JSON.stringify(payload))
+      .digest('hex');
+
+    if (expectedSignature !== signature) {
+      console.error('Invalid webhook signature');
+      return;
+    }
+
+    const event = payload.event;
+
+    // Log the event for auditing
+    console.log(`🔔 Razorpay Webhook Event Received: ${event}`);
+
+    switch (event) {
+      case 'payment.captured':
+        console.log(`✅ Payment captured: ${payload.payload.payment.entity.id}`);
+        break;
+
+      case 'payment.failed':
+        console.warn(`❌ Payment failed: ${payload.payload.payment.entity.id}`);
+        break;
+
+      case 'order.paid':
+        console.log(`💰 Order paid: ${payload.payload.order.entity.id}`);
+        break;
+
+      default:
+        console.log(`ℹ️ Unhandled webhook event: ${event}`);
+    }
+
+    // (Optional) You could store webhook logs to DB here
+  } catch (err) {
+    console.error('Webhook handling failed:', err);
+    throw err;
+  }
 };
+

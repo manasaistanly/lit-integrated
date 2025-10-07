@@ -78,7 +78,7 @@ const leaderboardRoutes = require('./routes/leaderboard');
 const streakRoutes = require('./routes/streakRoutes');
 
 // ✅ Routes - Store & Commerce
-const storeRoutes = require('./routes/store');
+const storeRoutes = require('./routes/storeRoutes');
 const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const savedProductsRoutes = require('./routes/savedProductRoutes');
@@ -143,7 +143,7 @@ app.use('/api/notifications', notificationRoutes);
 
 // ✅ Root endpoint
 app.get('/', (req, res) => {
-  res.send('🚀 Unified API for Ecommerce + Newsletter is running...');
+  res.send('🚀 Game...');
 });
 
 // ✅ Error handling middleware
