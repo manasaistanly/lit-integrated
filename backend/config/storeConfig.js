@@ -1,18 +1,38 @@
-exports.gemPacks = [
-  { price: 80, gems: 25 },
-  { price: 160, gems: 50 },
-  { price: 240, gems: 75 },
-  { price: 280, gems: 100 }
-];
-
-exports.lifePacks = [
-  { gems: 2, lives: 1 },
-  { gems: 4, lives: 2 },
-  { gems: 6, lives: 3 },
-  { gems: 8, lives: 5 }
-];
-exports.streakPacks = [
-  { gems: 50, days: 1 },   
-  { gems: 120, days: 3 },  
-  { gems: 250, days: 7 }   
-];
+module.exports = {
+  gemPacks: [
+    {
+      name: '100 Gems',
+      gems: 100,
+      price: 99,
+      bonus: 0,
+      popular: false
+    },
+    {
+      name: '500 Gems',
+      gems: 500,
+      price: 449,
+      bonus: 50,
+      popular: true
+    },
+    {
+      name: '1000 Gems',
+      gems: 1000,
+      price: 849,
+      bonus: 150,
+      popular: false
+    }
+  ],
+  
+  lifePacks: [
+    {
+      name: '1 Life',
+      lives: 1,
+      gems: 10
+    },
+    {
+      name: '5 Lives',
+      lives: 5,
+      gems: 45
+    }
+  ]
+};

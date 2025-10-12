@@ -1,33 +1,16 @@
 const User = require('../models/User');
 const ImagePair = require('../models/ImagePair');
+const Streak = require('../models/Streak');
 const { getTier } = require('../utils/tier');
-const Joi = require('joi');
 
 // --- Constants ---
 const CONSTANTS = {
   LIFE_REGEN_INTERVAL: 20, // minutes
   MAX_LIVES: 5,
   POINTS_PER_WIN: 10,
-  SAMPLE_PAIRS_SIZE: 10
+  SAMPLE_PAIRS_SIZE: 10,
+  STREAK_RESTORE_COST: 50 // gems
 };
-
-// --- Input validation schemas ---
-const objectIdPattern = /^[0-9a-fA-F]{24}$/;
-const validateUserId = Joi.string().pattern(objectIdPattern).required();
-const validatePairId = Joi.string().pattern(objectIdPattern).required();
-const validateChoice = Joi.string().valid('A', 'B').optional();
-const validateTimedOut = Joi.boolean().optional();
-
-/**
- * Validates request data against a schema
- * @param {Object} schema - Joi schema
- * @param {Object} data - Data to validate
- * @returns {string|null} Error message or null
- */
-function validateRequest(schema, data) {
-  const { error } = schema.validate(data);
-  return error ? error.details[0].message : null;
-}
 
 /**
  * Regenerates lives based on time passed
@@ -60,14 +43,24 @@ function formatResponse(success, data = null, error = null) {
   };
 }
 
+/**
+ * Gets or creates streak document for user
+ * @param {string} userId - User ID
+ * @returns {Object} Streak document
+ */
+async function getOrCreateStreak(userId) {
+  let streak = await Streak.findOne({ userId });
+  if (!streak) {
+    streak = new Streak({ userId });
+    await streak.save();
+  }
+  return streak;
+}
+
 // GET /product-pairs
 exports.getProductPairs = async (req, res) => {
   try {
-    const errorMsg = validateRequest(Joi.object({ userId: validateUserId }), req.query);
-    if (errorMsg) {
-      return res.status(400).json(formatResponse(false, null, errorMsg));
-    }
-
+    // Validation handled by route middleware
     const { userId } = req.query;
     const user = await User.findById(userId);
     if (!user) {
@@ -83,7 +76,16 @@ exports.getProductPairs = async (req, res) => {
       );
     }
 
-    const pairs = await ImagePair.aggregate([{ $sample: { size: CONSTANTS.SAMPLE_PAIRS_SIZE } }]);
+    // FIXED: Add active filter to aggregate query
+    const pairs = await ImagePair.aggregate([
+      { $match: { active: true } },
+      { $sample: { size: CONSTANTS.SAMPLE_PAIRS_SIZE } }
+    ]);
+
+    if (pairs.length === 0) {
+      return res.status(404).json(formatResponse(false, null, 'No active pairs available'));
+    }
+
     const formattedPairs = pairs.map(p => ({
       id: p._id,
       productA: { name: p.productA.name, image: p.productA.image },
@@ -100,11 +102,7 @@ exports.getProductPairs = async (req, res) => {
 // POST /exit-game
 exports.exitGame = async (req, res) => {
   try {
-    const errorMsg = validateRequest(Joi.object({ userId: validateUserId }), req.body);
-    if (errorMsg) {
-      return res.status(400).json(formatResponse(false, null, errorMsg));
-    }
-
+    // Validation handled by route middleware
     const { userId } = req.body;
     const user = await User.findById(userId);
     if (!user) {
@@ -120,15 +118,17 @@ exports.exitGame = async (req, res) => {
     }
 
     user.lives -= 1;
-    user.streak = 0;
     user.tier = getTier(user);
-
     await user.save();
+
+    // Get streak info (not affected by exit)
+    const streak = await getOrCreateStreak(userId);
 
     res.json(formatResponse(true, {
       lives: user.lives,
-      streak: user.streak,
-      tier: user.tier
+      streak: streak.currentStreak,
+      tier: user.tier,
+      canRestoreStreak: streak.canRestoreStreak
     }));
   } catch (err) {
     console.error('exitGame error:', err);
@@ -139,23 +139,13 @@ exports.exitGame = async (req, res) => {
 // POST /validate-answer
 exports.validateAnswer = async (req, res) => {
   try {
-    const schema = Joi.object({
-      userId: validateUserId,
-      pairId: validatePairId,
-      choice: validateChoice,
-      timedOut: validateTimedOut
-    });
-
-    const errorMsg = validateRequest(schema, req.body);
-    if (errorMsg) {
-      return res.status(400).json(formatResponse(false, null, errorMsg));
-    }
-
+    // Validation handled by route middleware
     const { userId, pairId, choice, timedOut } = req.body;
     
-    const [user, pair] = await Promise.all([
+    const [user, pair, streak] = await Promise.all([
       User.findById(userId),
-      choice ? ImagePair.findById(pairId) : null
+      choice ? ImagePair.findById(pairId) : null,
+      getOrCreateStreak(userId)
     ]);
 
     if (!user) {
@@ -175,42 +165,46 @@ exports.validateAnswer = async (req, res) => {
     let isCorrect = false;
 
     if (timedOut || !choice) {
+      // Timeout: Lose life but counts as playing today (maintains streak)
       user.lives = Math.max(0, user.lives - 1);
-      user.streak = 0;
-      user.lastPlayedAt = new Date();
+      await streak.updateOnPlay();
+      
+      // FIXED: Track timeout in statistics if pair exists
+      if (pair) {
+        pair.timesShown = (pair.timesShown || 0) + 1;
+        pair.lastShownAt = new Date();
+        await pair.save();
+      }
     } else {
       if (!pair) {
         return res.status(404).json(formatResponse(false, null, 'Pair not found'));
       }
 
+      // FIXED: Always track that pair was shown
+      pair.timesShown = (pair.timesShown || 0) + 1;
+      pair.lastShownAt = new Date();
+
       if (
         (choice === 'A' && pair.productA.price > pair.productB.price) ||
         (choice === 'B' && pair.productB.price > pair.productA.price)
       ) {
+        // Correct answer
         isCorrect = true;
         user.gamesWon = (user.gamesWon || 0) + 1;
         user.points = (user.points || 0) + CONSTANTS.POINTS_PER_WIN;
-
-        // Streak logic
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        if (user.streak > 0 && user.lastPlayedAt) {
-          const last = new Date(user.lastPlayedAt);
-          last.setHours(0, 0, 0, 0);
-          const dayDiff = (today - last) / (1000 * 60 * 60 * 24);
-
-          if (dayDiff === 1) user.streak += 1;
-          else if (dayDiff > 1) user.streak = 1;
-        } else {
-          user.streak = 1;
-        }
-        user.lastPlayedAt = today;
+        
+        // FIXED: Track correct answer in statistics
+        pair.timesCorrect = (pair.timesCorrect || 0) + 1;
+        
+        await streak.updateOnPlay();
       } else {
+        // Wrong answer: Lose life but streak NOT affected
         user.lives = Math.max(0, user.lives - 1);
-        user.streak = 0;
-        user.lastPlayedAt = new Date();
+        await streak.updateOnPlay();
       }
+
+      // Save pair statistics
+      await pair.save();
     }
 
     user.tier = getTier(user);
@@ -220,11 +214,101 @@ exports.validateAnswer = async (req, res) => {
       correct: isCorrect,
       points: user.points,
       lives: user.lives,
-      streak: user.streak,
-      tier: user.tier
+      streak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      tier: user.tier,
+      canRestoreStreak: streak.canRestoreStreak,
+      timeLeftToRestore: streak.canRestoreStreakTimeLeft
     }));
+
   } catch (err) {
     console.error('validateAnswer error:', err);
     res.status(500).json(formatResponse(false, null, 'Internal server error'));
   }
 };
+
+// GET /streak - Get user's streak information
+exports.getStreakInfo = async (req, res) => {
+  try {
+    // Validation handled by route middleware
+    const { userId } = req.query;
+    const streak = await getOrCreateStreak(userId);
+
+    res.json(formatResponse(true, {
+      currentStreak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      totalDaysActive: streak.totalDaysActive,
+      canRestoreStreak: streak.canRestoreStreak,
+      previousStreak: streak.previousStreak,
+      timeLeftToRestore: streak.canRestoreStreakTimeLeft,
+      nextMilestone: streak.nextMilestone,
+      milestones: streak.milestones,
+      isActive: streak.isActive,
+      restoreCost: CONSTANTS.STREAK_RESTORE_COST
+    }));
+  } catch (err) {
+    console.error('getStreakInfo error:', err);
+    res.status(500).json(formatResponse(false, null, 'Internal server error'));
+  }
+};
+
+// POST /restore-streak - Restore broken streak using gems
+exports.restoreStreak = async (req, res) => {
+  try {
+    // Validation handled by route middleware
+    const { userId, gemsToSpend } = req.body;
+    
+    const [user, streak] = await Promise.all([
+      User.findById(userId),
+      getOrCreateStreak(userId)
+    ]);
+
+    if (!user) {
+      return res.status(404).json(formatResponse(false, null, 'User not found'));
+    }
+
+    if (!streak.canRestoreStreak) {
+      return res.status(400).json(
+        formatResponse(false, null, 'No streak available to restore')
+      );
+    }
+
+    if (gemsToSpend < CONSTANTS.STREAK_RESTORE_COST) {
+      return res.status(400).json(
+        formatResponse(false, null, `Requires ${CONSTANTS.STREAK_RESTORE_COST} gems to restore streak`)
+      );
+    }
+
+    if ((user.gems || 0) < gemsToSpend) {
+      return res.status(400).json(
+        formatResponse(false, null, 'Not enough gems')
+      );
+    }
+
+    try {
+      // Restore the streak
+      await streak.restoreStreak();
+      
+      // Deduct gems from user
+      user.gems = (user.gems || 0) - gemsToSpend;
+      await user.save();
+
+      res.json(formatResponse(true, {
+        streak: streak.currentStreak,
+        longestStreak: streak.longestStreak,
+        gems: user.gems,
+        canRestoreStreak: streak.canRestoreStreak,
+        message: 'Streak restored successfully!'
+      }));
+    } catch (restoreError) {
+      return res.status(400).json(
+        formatResponse(false, null, restoreError.message)
+      );
+    }
+  } catch (err) {
+    console.error('restoreStreak error:', err);
+    res.status(500).json(formatResponse(false, null, 'Internal server error'));
+  }
+};
+
+module.exports = exports;

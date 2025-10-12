@@ -6,8 +6,8 @@ const path = require('path');
 const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-// Initial route imports removed to avoid duplication
-// These are now organized in the sections below
+const mongoSanitize = require('express-mongo-sanitize');
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -40,6 +40,7 @@ const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100 // limit each IP to 100 requests per windowMs
 });
+app.use(mongoSanitize());
 
 // API-specific rate limiters
 const gameLimiter = rateLimit({
@@ -75,14 +76,14 @@ const userStatsRoutes = require('./routes/userStats');
 // ✅ Routes - Game System
 const gameEngineRoutes = require('./routes/gameEngine');
 const leaderboardRoutes = require('./routes/leaderboard');
-const streakRoutes = require('./routes/streakRoutes');
+//const streakRoutes = require('./routes/streakRoutes');
 
 // ✅ Routes - Store & Commerce
 const storeRoutes = require('./routes/storeRoutes');
 const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const savedProductsRoutes = require('./routes/savedProductRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
+//const paymentRoutes = require('./routes/paymentRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 
 // ✅ Routes - Content & Articles
@@ -115,14 +116,14 @@ app.use('/api/user-stats', userStatsRoutes);
 // Game System
 app.use('/api/game-engine', gameEngineRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
-app.use('/api/streak', streakRoutes);
+//app.use('/api/streak', streakRoutes);
 
 // Store & Commerce
 app.use('/api/store', storeRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/saved-products', savedProductsRoutes);
-app.use('/api/payments', paymentRoutes);
+//app.use('/api/payments', paymentRoutes);
 app.use('/api/coupons', couponRoutes);
 
 // Content & Articles

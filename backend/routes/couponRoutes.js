@@ -1,323 +1,202 @@
 const express = require('express');
 const router = express.Router();
-const Coupon = require('../models/Coupon');
+const couponController = require('../controllers/couponController');
 const auth = require('../middleware/auth');
 const rateLimit = require('express-rate-limit');
+const { validateRequest } = require('../middleware/validateRequest');
 const Joi = require('joi');
 
 // Rate limiting configuration
 const couponLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50, // Limit each IP to 50 requests per windowMs
+  max: 50,
   message: 'Too many coupon requests, please try again later'
 });
 
-// Validation schemas
-const schemas = {
-  validate: Joi.object({
-    code: Joi.string().trim().length(8).required(),
-    userId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required()
+// Stricter rate limit for redemption (prevent abuse)
+const redemptionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // Only 5 redemptions per hour
+  message: 'Too many redemption attempts, please try again later'
+});
+
+// Application rate limit (prevent coupon spam)
+const applicationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  message: 'Too many coupon applications, please try again later'
+});
+
+// Input validation schemas
+const objectIdPattern = /^[0-9a-fA-F]{24}$/;
+
+const validationSchemas = {
+  redeemCoupon: Joi.object({
+    userId: Joi.string().pattern(objectIdPattern).required(),
+    pointsToRedeem: Joi.number().integer().min(50000).required()
   }),
   
-  markUsed: Joi.object({
-    code: Joi.string().trim().length(8).required(),
-    userId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required()
+  createCoupon: Joi.object({
+    userId: Joi.string().pattern(objectIdPattern).required(),
+    discountValue: Joi.number().min(1).max(100).optional(),
+    expiryDays: Joi.number().min(1).max(365).optional(),
+    type: Joi.string().valid('game_reward', 'promotional', 'referral', 'admin').optional()
   }),
   
-  create: Joi.object({
-    userId: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required()
+  validateCoupon: Joi.object({
+    userId: Joi.string().pattern(objectIdPattern).required(),
+    code: Joi.string().length(8).uppercase().required()
+  }),
+  
+  applyCoupon: Joi.object({
+    userId: Joi.string().pattern(objectIdPattern).required(),
+    code: Joi.string().length(8).uppercase().required(),
+    orderAmount: Joi.number().min(0).required()
+  }),
+  
+  getUserCoupons: Joi.object({
+    userId: Joi.string().pattern(objectIdPattern).required()
+  }),
+  
+  checkEligibility: Joi.object({
+    userId: Joi.string().pattern(objectIdPattern).required()
   })
 };
 
-// Middleware for request validation
-const validateRequest = (schema) => {
-  return (req, res, next) => {
-    const { error } = schema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        success: false,
-        error: error.details[0].message
-      });
-    }
-    next();
-  };
-};
+// ===== COUPON REDEMPTION ROUTES =====
 
 /**
- * Create new coupon
- * @route POST /api/coupons
+ * @route   POST /api/coupons/redeem
+ * @desc    Redeem a coupon using 50,000 game points
+ * @access  Private
  */
-router.post('/',
+router.post('/redeem',
   auth,
-  couponLimiter,
-  validateRequest(schemas.create),
-  async (req, res) => {
-    try {
-      const { userId } = req.body;
-
-      // Check for existing active coupons
-      const existingCoupon = await Coupon.findOne({
-        userId,
-        status: 'active',
-        expiresAt: { $gt: new Date() }
-      });
-
-      if (existingCoupon) {
-        return res.status(400).json({
-          success: false,
-          error: 'User already has an active coupon'
-        });
-      }
-
-      // Generate coupon code
-      const code = require('crypto')
-        .randomBytes(4)
-        .toString('hex')
-        .toUpperCase();
-
-      // Create new coupon
-      const coupon = await Coupon.create({
-        code,
-        userId,
-        status: 'active',
-        discountType: 'percent',
-        discountValue: 10,
-        expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000) // 15 days
-      });
-
-      res.status(201).json({
-        success: true,
-        data: {
-          code: coupon.code,
-          discountValue: coupon.discountValue,
-          expiresAt: coupon.expiresAt
-        }
-      });
-    } catch (err) {
-      console.error('Create coupon error:', err);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to create coupon'
-      });
-    }
-  }
+  redemptionLimiter,
+  validateRequest(validationSchemas.redeemCoupon),
+  couponController.redeemCouponWithPoints
 );
 
 /**
- * Validate coupon
- * @route POST /api/coupons/validate
+ * @route   GET /api/coupons/can-redeem
+ * @desc    Check if user has enough points to redeem a coupon
+ * @access  Private
+ */
+router.get('/can-redeem',
+  auth,
+  couponLimiter,
+  validateRequest(validationSchemas.checkEligibility, 'query'),
+  couponController.checkRedeemEligibility
+);
+
+// ===== COUPON MANAGEMENT ROUTES =====
+
+/**
+ * @route   POST /api/coupons/create
+ * @desc    Create a promotional coupon (admin only)
+ * @access  Private/Admin
+ */
+router.post('/create',
+  auth,
+  // adminAuth, // Add admin middleware if you have one
+  couponLimiter,
+  validateRequest(validationSchemas.createCoupon),
+  couponController.createCoupon
+);
+
+/**
+ * @route   POST /api/coupons/validate
+ * @desc    Validate a coupon code
+ * @access  Private
  */
 router.post('/validate',
   auth,
   couponLimiter,
-  validateRequest(schemas.validate),
-  async (req, res) => {
+  validateRequest(validationSchemas.validateCoupon),
+  couponController.validateCoupon
+);
+
+/**
+ * @route   POST /api/coupons/apply
+ * @desc    Apply coupon to order (marks as used)
+ * @access  Private
+ */
+router.post('/apply',
+  auth,
+  applicationLimiter,
+  validateRequest(validationSchemas.applyCoupon),
+  couponController.applyCoupon
+);
+
+/**
+ * @route   GET /api/coupons/user
+ * @desc    Get all coupons for a user
+ * @access  Private
+ */
+router.get('/user',
+  auth,
+  couponLimiter,
+  validateRequest(validationSchemas.getUserCoupons, 'query'),
+  couponController.getUserCoupons
+);
+
+// ===== UTILITY ROUTES =====
+
+/**
+ * @route   GET /api/coupons/stats
+ * @desc    Get coupon statistics for user
+ * @access  Private
+ */
+router.get('/stats',
+  auth,
+  async (req, res, next) => {
     try {
-      const { code, userId } = req.body;
-
-      const coupon = await Coupon.findOne({
-        code: code.trim().toUpperCase(),
-        userId
+      const Coupon = require('../models/Coupon');
+      const { userId } = req.query;
+      
+      if (!userId || !/^[0-9a-fA-F]{24}$/.test(userId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Valid userId is required'
+        });
+      }
+      
+      const stats = await Coupon.getUserCouponStats(userId);
+      
+      res.json({
+        success: true,
+        data: stats,
+        timestamp: new Date().toISOString()
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
-      if (!coupon) {
-        return res.status(404).json({
-          success: false,
-          error: 'Invalid or expired coupon code'
-        });
-      }
-
-      // Mark as expired if past expiration
-      if (coupon.expiresAt && coupon.expiresAt < new Date()) {
-        coupon.status = 'expired';
-        await coupon.save();
-        return res.status(400).json({
-          success: false,
-          error: 'Coupon code has expired'
-        });
-      }
-
-      if (coupon.status !== 'active') {
-        return res.status(400).json({
-          success: false,
-          error: 'Coupon already used or expired'
-        });
-      }
-
+/**
+ * @route   POST /api/coupons/expire-old
+ * @desc    Manually expire old coupons (admin/cron)
+ * @access  Private/Admin
+ */
+router.post('/expire-old',
+  auth,
+  // adminAuth, // Add admin middleware
+  async (req, res, next) => {
+    try {
+      const Coupon = require('../models/Coupon');
+      const count = await Coupon.expireOldCoupons();
+      
       res.json({
         success: true,
         data: {
-          code: coupon.code,
-          discountType: coupon.discountType,
-          discountValue: coupon.discountValue,
-          expiresAt: coupon.expiresAt,
-          status: coupon.status
-        }
+          message: 'Old coupons expired successfully',
+          expiredCount: count
+        },
+        timestamp: new Date().toISOString()
       });
-    } catch (err) {
-      console.error('Coupon validation error:', err);
-      res.status(500).json({
-        success: false,
-        error: 'Server error validating coupon'
-      });
-    }
-  }
-);
-
-/**
- * Mark coupon as used
- * @route POST /api/coupons/mark-used
- */
-router.post('/mark-used',
-  auth,
-  couponLimiter,
-  validateRequest(schemas.markUsed),
-  async (req, res) => {
-    try {
-      const { code, userId } = req.body;
-
-      const coupon = await Coupon.findOne({
-        code: code.trim().toUpperCase(),
-        userId
-      });
-
-      if (!coupon) {
-        return res.status(404).json({
-          success: false,
-          error: 'Coupon not found'
-        });
-      }
-
-      if (coupon.status !== 'active' || 
-          (coupon.expiresAt && coupon.expiresAt < new Date())) {
-        coupon.status = 'expired';
-        await coupon.save();
-        return res.status(400).json({
-          success: false,
-          error: 'Coupon is not valid'
-        });
-      }
-
-      coupon.status = 'used';
-      coupon.usedAt = new Date();
-      await coupon.save();
-
-      res.json({
-        success: true,
-        message: 'Coupon marked as used'
-      });
-    } catch (err) {
-      console.error('Mark coupon used error:', err);
-      res.status(500).json({
-        success: false,
-        error: 'Server error marking coupon as used'
-      });
-    }
-  }
-);
-
-/**
- * Create new coupon
- * @route POST /api/coupons/create
- */
-router.post('/create',
-  auth,
-  couponLimiter,
-  validateRequest(schemas.create),
-  async (req, res) => {
-    try {
-      const { userId } = req.body;
-
-      // Check for existing active coupon
-      const hasActive = await Coupon.findOne({
-        userId,
-        status: 'active',
-        expiresAt: { $gt: new Date() }
-      });
-
-      if (hasActive) {
-        return res.status(400).json({
-          success: false,
-          error: 'Active coupon already exists'
-        });
-      }
-
-      const code = require('crypto')
-        .randomBytes(4)
-        .toString('hex')
-        .toUpperCase();
-      
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 15); // 15 days
-
-      const coupon = await Coupon.create({
-        code,
-        userId,
-        discountType: 'percent',
-        discountValue: 10,
-        expiresAt,
-        status: 'active'
-      });
-
-      res.json({
-        success: true,
-        data: coupon
-      });
-    } catch (err) {
-      console.error('Create coupon error:', err);
-      res.status(500).json({
-        success: false,
-        error: 'Server error creating coupon'
-      });
-    }
-  }
-);
-
-/**
- * Get user's coupons
- * @route GET /api/coupons/my-coupons
- */
-router.get('/my-coupons',
-  auth,
-  couponLimiter,
-  async (req, res) => {
-    try {
-      const { userId } = req.query;
-
-      if (!userId.match(/^[0-9a-fA-F]{24}$/)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid user ID format'
-        });
-      }
-
-      const coupons = await Coupon.find({ userId })
-        .sort({ createdAt: -1 })
-        .lean();
-
-      // Update expired coupons status
-      const now = new Date();
-      const expiredCoupons = coupons.filter(
-        c => c.status === 'active' && c.expiresAt < now
-      );
-
-      if (expiredCoupons.length > 0) {
-        await Coupon.updateMany(
-          { _id: { $in: expiredCoupons.map(c => c._id) } },
-          { status: 'expired' }
-        );
-      }
-
-      res.json({
-        success: true,
-        data: coupons
-      });
-    } catch (err) {
-      console.error('Fetch coupons error:', err);
-      res.status(500).json({
-        success: false,
-        error: 'Server error fetching coupons'
-      });
+    } catch (error) {
+      next(error);
     }
   }
 );

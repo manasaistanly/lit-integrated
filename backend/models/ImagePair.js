@@ -3,13 +3,13 @@ const mongoose = require('mongoose');
 // Constants for validation
 const CONSTANTS = {
   MIN_PRICE: 0,
-  MAX_PRICE: 1000000, // Set appropriate maximum price
+  MAX_PRICE: 1000000,
   MIN_NAME_LENGTH: 2,
   MAX_NAME_LENGTH: 100,
-  SUPPORTED_IMAGE_TYPES: ['jpg', 'jpeg', 'png', 'webp']
+  SUPPORTED_IMAGE_TYPES: ['jpg', 'jpeg', 'png', 'webp', 'gif']
 };
 
-// Product sub-schema for reusability and consistency
+// Product sub-schema
 const productSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -23,12 +23,22 @@ const productSchema = new mongoose.Schema({
     required: [true, 'Product image is required'],
     validate: {
       validator: function(v) {
-        // Validate image URL format and file type
         if (!v) return false;
-        const extension = v.split('.').pop().toLowerCase();
-        return CONSTANTS.SUPPORTED_IMAGE_TYPES.includes(extension);
+        
+        // Handle both URLs and simple filenames
+        try {
+          // Try parsing as URL
+          const url = new URL(v);
+          const pathname = url.pathname;
+          const extension = pathname.split('.').pop().toLowerCase();
+          return CONSTANTS.SUPPORTED_IMAGE_TYPES.includes(extension);
+        } catch {
+          // If not a valid URL, check if it's a filename with extension
+          const extension = v.split('.').pop().toLowerCase();
+          return CONSTANTS.SUPPORTED_IMAGE_TYPES.includes(extension);
+        }
       },
-      message: `Image must be one of: ${CONSTANTS.SUPPORTED_IMAGE_TYPES.join(', ')}`
+      message: `Image must have a valid extension: ${CONSTANTS.SUPPORTED_IMAGE_TYPES.join(', ')}`
     }
   },
   price: {
@@ -36,12 +46,9 @@ const productSchema = new mongoose.Schema({
     required: [true, 'Product price is required'],
     min: [CONSTANTS.MIN_PRICE, 'Price cannot be negative'],
     max: [CONSTANTS.MAX_PRICE, 'Price exceeds maximum allowed'],
-    validate: {
-      validator: function(v) {
-        // Ensure price has maximum 2 decimal places
-        return /^\d+(\.\d{1,2})?$/.test(v.toString());
-      },
-      message: 'Price can have maximum 2 decimal places'
+    set: function(v) {
+      // Round to 2 decimal places
+      return Math.round(v * 100) / 100;
     }
   },
   category: {
@@ -52,9 +59,9 @@ const productSchema = new mongoose.Schema({
   metadata: {
     type: Map,
     of: String,
-    default: () => new Map()
+    default: new Map
   }
-});
+}, { _id: false }); // Don't create _id for subdocuments
 
 const imagePairSchema = new mongoose.Schema({
   productA: {
@@ -73,15 +80,17 @@ const imagePairSchema = new mongoose.Schema({
   active: {
     type: Boolean,
     default: true,
-    index: true // Index for querying active pairs
+    index: true
   },
   timesShown: {
     type: Number,
-    default: 0
+    default: 0,
+    min: 0
   },
   timesCorrect: {
     type: Number,
-    default: 0
+    default: 0,
+    min: 0
   },
   lastShownAt: {
     type: Date,
@@ -93,21 +102,27 @@ const imagePairSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes
+// Indexes for better query performance
 imagePairSchema.index({ 'productA.price': 1, 'productB.price': 1 });
 imagePairSchema.index({ 'productA.category': 1, 'productB.category': 1 });
 imagePairSchema.index({ difficulty: 1, active: 1 });
+imagePairSchema.index({ lastShownAt: 1, active: 1 }); // For fair rotation
 
 // Virtual for price difference
 imagePairSchema.virtual('priceDifference').get(function() {
   return Math.abs(this.productA.price - this.productB.price);
 });
 
-// Virtual for difficulty rating based on price difference
-imagePairSchema.virtual('calculatedDifficulty').get(function() {
-  const diff = this.priceDifference;
+// Virtual for price difference percentage
+imagePairSchema.virtual('priceDifferencePercent').get(function() {
   const avgPrice = (this.productA.price + this.productB.price) / 2;
-  const diffPercent = (diff / avgPrice) * 100;
+  if (avgPrice === 0) return 0;
+  return (this.priceDifference / avgPrice) * 100;
+});
+
+// Virtual for calculated difficulty based on price difference
+imagePairSchema.virtual('calculatedDifficulty').get(function() {
+  const diffPercent = this.priceDifferencePercent;
   
   if (diffPercent > 50) return 'easy';
   if (diffPercent > 20) return 'medium';
@@ -117,7 +132,12 @@ imagePairSchema.virtual('calculatedDifficulty').get(function() {
 // Virtual for success rate
 imagePairSchema.virtual('successRate').get(function() {
   if (this.timesShown === 0) return 0;
-  return (this.timesCorrect / this.timesShown * 100).toFixed(2);
+  return parseFloat((this.timesCorrect / this.timesShown * 100).toFixed(2));
+});
+
+// Virtual for more expensive product
+imagePairSchema.virtual('moreExpensive').get(function() {
+  return this.productA.price > this.productB.price ? 'A' : 'B';
 });
 
 // Methods
@@ -136,10 +156,10 @@ imagePairSchema.methods.validatePrices = function() {
   return this.productA.price !== this.productB.price;
 };
 
-// Statics
+// Statics for querying
 imagePairSchema.statics.findActivePairs = function(limit = 10) {
   return this.find({ active: true })
-    .sort({ lastShownAt: 1 })
+    .sort({ lastShownAt: 1, timesShown: 1 }) // Fair rotation
     .limit(limit);
 };
 
@@ -152,33 +172,38 @@ imagePairSchema.statics.findByDifficulty = function(difficulty, limit = 10) {
     .limit(limit);
 };
 
-// Pre-save middleware
+imagePairSchema.statics.getRandomActivePairs = function(count = 10) {
+  return this.aggregate([
+    { $match: { active: true } },
+    { $sample: { size: count } }
+  ]);
+};
+
+// Pre-save validation
 imagePairSchema.pre('save', function(next) {
   // Ensure prices are different
   if (this.productA.price === this.productB.price) {
-    next(new Error('Products must have different prices'));
+    return next(new Error('Products must have different prices'));
   }
   
-  // Update difficulty based on price difference
-  this.difficulty = this.calculatedDifficulty;
+  // FIXED: Only auto-update difficulty if not explicitly set by user
+  // This allows manual override while still providing automatic calculation
+  if (this.isNew || (!this.isModified('difficulty') && this.isModified('productA.price', 'productB.price'))) {
+    this.difficulty = this.calculatedDifficulty;
+  }
+  
+  // Validate timesCorrect never exceeds timesShown
+  if (this.timesCorrect > this.timesShown) {
+    return next(new Error('Times correct cannot exceed times shown'));
+  }
   
   next();
 });
 
-// Pre-find middleware
-imagePairSchema.pre('find', function() {
-  // Default to only active pairs
-  if (!this.getQuery().hasOwnProperty('active')) {
-    this.where({ active: true });
-  }
-});
+// REMOVED: Pre-find middleware (doesn't work with aggregate)
+// Instead, always explicitly filter in queries or use static methods
 
 // Create model
 const ImagePair = mongoose.model('ImagePair', imagePairSchema);
-
-// Create indexes
-ImagePair.createIndexes().catch(err => {
-  console.error('Error creating image pair indexes:', err);
-});
 
 module.exports = ImagePair;
